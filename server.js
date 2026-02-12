@@ -23,6 +23,7 @@ let objectImageCache = {};
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
+fs.mkdirSync(GENERATED_DIR, { recursive: true });
 
 function normalizeFacing(facing) {
   if (facing === 'north' || facing === 'south' || facing === 'east' || facing === 'west') {
@@ -192,6 +193,7 @@ function assertSafeGeneratedPath(imageUrl) {
 }
 
 async function runGenerator({ prompt, outputAbs, editAbs, refAbsList, whiteKey, floodFillThreshold }) {
+  fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
   const args = [PYTHON_SCRIPT, prompt, '-o', outputAbs];
   if (editAbs) {
     args.push('--edit', editAbs);
@@ -364,6 +366,10 @@ app.post('/api/uncache-object-orientation', (req, res) => {
   }
   const removed = removeVariant(normalizeObjectKey(objectKey), normalizeFacing(orientation));
   return res.json({ removed });
+});
+
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true });
 });
 
 loadCache();
