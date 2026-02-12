@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tammiegotchi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="device">
+      <div class="device-top">
+        <h1>Tammiegotchi</h1>
+      </div>
+      <div class="screen-bezel">
+        <canvas id="game" width="1600" height="824"></canvas>
+      </div>
+      <div class="device-bottom">
+        <div id="status">Ready.</div>
+        <div class="controls-hint">
+          <span>Arrows: move</span>
+          <span>Shift + Arrows: face only</span>
+          <span>Space: interact</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-title" id="modal-title"></div>
+        <input type="text" id="modal-input" autocomplete="off" spellcheck="false" />
+        <div class="modal-buttons">
+          <button id="modal-cancel">Cancel</button>
+          <button id="modal-ok" class="modal-ok">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
