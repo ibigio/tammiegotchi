@@ -104,6 +104,17 @@ function aheadPos() {
   return { x: state.player.x + dx, y: state.player.y + dy };
 }
 
+function countInstancesOfVariant(objectKey, orientation, excludeTileKey) {
+  let count = 0;
+  for (const [k, obj] of state.objects.entries()) {
+    if (k === excludeTileKey) continue;
+    if (obj.objectKey === objectKey && obj.orientation === orientation) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function keepPlayerAwayFromEdge() {
   const sx = state.player.x - state.camera.x;
   const sy = state.player.y - state.camera.y;
@@ -337,6 +348,8 @@ async function interact() {
       state.objects.set(key, {
         name: data.name,
         imageUrl: data.imageUrl,
+        objectKey: data.objectKey,
+        orientation: data.orientation,
         img: loadImage(data.imageUrl),
         pending: false,
       });
@@ -394,6 +407,8 @@ async function interact() {
     state.objects.set(key, {
       name: data.name,
       imageUrl: data.imageUrl,
+      objectKey: existing.objectKey || data.objectKey,
+      orientation: existing.orientation || data.orientation,
       img: loadImage(data.imageUrl),
       pending: false,
     });
@@ -404,6 +419,48 @@ async function interact() {
       state.objects.set(key, old);
     }
     finishOperationMessage(`Edit failed: ${err.message}`);
+  }
+}
+
+async function deleteObjectAhead() {
+  const { x, y } = aheadPos();
+  const key = tileKey(x, y);
+  const existing = state.objects.get(key);
+  if (!existing) {
+    setStatus('No object in front to delete.');
+    return;
+  }
+  if (existing.pending) {
+    setStatus(`${existing.name} is currently ${existing.pendingKind === 'edit' ? 'updating' : 'materializing'} and cannot be deleted yet.`);
+    return;
+  }
+  const objectKey = existing.objectKey;
+  const orientation = existing.orientation;
+  const shouldUncache =
+    objectKey &&
+    orientation &&
+    countInstancesOfVariant(objectKey, orientation, key) === 0;
+
+  state.objects.delete(key);
+  if (!shouldUncache) {
+    setStatus(`Deleted ${existing.name}.`);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/uncache-object-orientation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objectKey, orientation }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.removed) {
+      setStatus(`Deleted ${existing.name}. Cache cleanup skipped.`);
+      return;
+    }
+    setStatus(`Deleted ${existing.name}. Uncached ${orientation} variant for redo.`);
+  } catch {
+    setStatus(`Deleted ${existing.name}. Cache cleanup failed.`);
   }
 }
 
@@ -427,6 +484,12 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') {
     e.preventDefault();
     interact();
+    return;
+  }
+
+  if (e.code === 'Backspace') {
+    e.preventDefault();
+    deleteObjectAhead();
     return;
   }
 

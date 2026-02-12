@@ -17,6 +17,13 @@ import urllib.request
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
+def _normalize_hex_color(color: str) -> str:
+    normalized = color.strip().lstrip("#").upper()
+    if len(normalized) != 6:
+        raise ValueError("Color must be 6 hex digits, e.g. FFFFFF")
+    return normalized
+
+
 def _guess_mime_type(path: str) -> str:
     guessed, _ = mimetypes.guess_type(path)
     return guessed or "image/png"
@@ -33,6 +40,7 @@ def generate_image(
     prompt: str,
     output_path: str,
     edit_path: Optional[str] = None,
+    ref_paths: Optional[list[str]] = None,
 ) -> Tuple[str, Dict[str, object]]:
     url = f"{API_BASE}/{model}:generateContent"
     parts = []
@@ -45,6 +53,16 @@ def generate_image(
                 }
             }
         )
+    if ref_paths:
+        for ref_path in ref_paths:
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": _guess_mime_type(ref_path),
+                        "data": _encode_file_base64(ref_path),
+                    }
+                }
+            )
     parts.append({"text": prompt})
 
     payload = {
@@ -229,6 +247,12 @@ def main() -> int:
         help="Optional input image path to edit. If set, the prompt is applied to this image.",
     )
     parser.add_argument(
+        "--ref",
+        action="append",
+        default=[],
+        help="Optional reference image path (repeatable). Used for style/orientation guidance.",
+    )
+    parser.add_argument(
         "--remove-white-bg",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -237,8 +261,8 @@ def main() -> int:
     parser.add_argument(
         "--bg-remove-mode",
         choices=("key", "flood-fill"),
-        default="key",
-        help="Background removal mode when --remove-white-bg is enabled (default: key).",
+        default="flood-fill",
+        help="Background removal mode when --remove-white-bg is enabled (default: flood-fill).",
     )
     parser.add_argument(
         "--white-key",
@@ -267,11 +291,17 @@ def main() -> int:
 
     prompt = args.prompt
     if args.remove_white_bg:
+        try:
+            matte_hex = _normalize_hex_color(args.white_key)
+        except ValueError as err:
+            print(f"Invalid --white-key: {err}", file=sys.stderr)
+            return 2
+
         # Encourage a clean matte for reliable white-to-alpha keying.
         prompt = (
             f"{prompt}\n\n"
-            "Important output constraint: use a completely pure white background "
-            "(#FFFFFF), flat and uniform, with no shadows, floor, gradients, or texture."
+            "Important output constraint: use a completely pure matte background "
+            f"(#{matte_hex}), flat and uniform, with no shadows, floor, gradients, or texture."
         )
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -286,6 +316,7 @@ def main() -> int:
             prompt=prompt,
             output_path=args.output,
             edit_path=args.edit,
+            ref_paths=args.ref,
         )
     except Exception as err:
         print(f"Generation failed: {err}", file=sys.stderr)
