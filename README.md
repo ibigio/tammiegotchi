@@ -77,3 +77,15 @@ python3 nanobanana_generate.py \
   --bg-remove-mode flood-fill \
   -o raccoon_right.png
 ```
+
+## Deploy on Render (Easy)
+
+This repo includes a Render Blueprint file: `render.yaml`.
+
+1. In Render, choose **New +** -> **Blueprint**.
+2. Connect your GitHub repo.
+3. Render will detect `render.yaml` and prefill service settings.
+4. Add `GEMINI_API_KEY` in the service environment variables.
+5. Deploy.
+
+Health check endpoint is `GET /healthz`.

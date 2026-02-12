@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: tammiegotchi
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: |
+      npm ci
+      python3 -m venv .venv
+      ./.venv/bin/pip install --upgrade pip
+      ./.venv/bin/pip install pillow
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: 22.22.0

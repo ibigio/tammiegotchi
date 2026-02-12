@@ -4,13 +4,17 @@ const statusEl = document.getElementById('status');
 ctx.imageSmoothingEnabled = false;
 
 const TILE = 160;
+const TILE_SQUISH = 0.8; // 2.5D tilt effect: tiles are 80% height
+const TILE_H = TILE * TILE_SQUISH; // squished tile height
 const ELEV = 24;
+const WALL_HEIGHT = 60; // vertical height of wall face
+const HOTBAR_SLOTS = 9;
 const EDGE_BUFFER_X = 2;
 const EDGE_BUFFER_Y = 1;
 const VIEW_W = Math.floor(canvas.width / TILE);
-const VIEW_H = Math.floor((canvas.height - ELEV) / TILE);
+const VIEW_H = Math.floor((canvas.height - ELEV) / TILE_H);
 const ORIGIN_X = Math.floor((canvas.width - VIEW_W * TILE) / 2);
-const ORIGIN_Y = Math.floor((canvas.height - (VIEW_H * TILE + ELEV)) / 2);
+const ORIGIN_Y = Math.floor((canvas.height - (VIEW_H * TILE_H + ELEV)) / 2);
 
 const state = {
   player: { x: 0, y: 0, facing: 'south' },
@@ -21,6 +25,8 @@ const state = {
   objects: new Map(),
   pendingOps: 0,
   modalOpen: false,
+  selectedWallSlot: 0,
+  wallHotbar: Array.from({ length: HOTBAR_SLOTS }, () => null),
 };
 
 const sprites = {
@@ -58,6 +64,17 @@ function loadImage(src) {
   return img;
 }
 
+function initWallHotbar() {
+  state.wallHotbar[0] = {
+    name: 'brick wall',
+    imageUrl: '/assets/wall_bricks.png',
+    img: loadImage('/assets/wall_bricks.png'),
+    pending: false,
+  };
+}
+
+initWallHotbar();
+
 function hash2(x, y) {
   let h = (x * 374761393 + y * 668265263) | 0;
   h = (h ^ (h >>> 13)) * 1274126177;
@@ -89,7 +106,7 @@ function worldToScreen(wx, wy) {
 function screenToPx(sx, sy) {
   return {
     x: ORIGIN_X + sx * TILE,
-    y: ORIGIN_Y + sy * TILE,
+    y: ORIGIN_Y + sy * TILE_H, // Use squished height for 2.5D effect
   };
 }
 
@@ -202,7 +219,7 @@ function showPrompt(title, defaultValue = '') {
 
 function drawBaseGrassLayer() {
   ctx.fillStyle = '#90af7b';
-  ctx.fillRect(ORIGIN_X, ORIGIN_Y, VIEW_W * TILE, VIEW_H * TILE + ELEV);
+  ctx.fillRect(ORIGIN_X, ORIGIN_Y, VIEW_W * TILE, VIEW_H * TILE_H + ELEV);
 }
 
 function drawTile(wx, wy, highlight = false) {
@@ -217,39 +234,131 @@ function drawTile(wx, wy, highlight = false) {
   if (tex.complete) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(p.x, p.y, TILE, TILE);
+    ctx.rect(p.x, p.y, TILE, TILE_H); // Squished tile height
     ctx.clip();
     ctx.globalAlpha = 0.92;
-    ctx.drawImage(tex, p.x, p.y, TILE, TILE);
+    ctx.drawImage(tex, p.x, p.y, TILE, TILE_H); // Draw texture squished
     ctx.restore();
   }
 
+  // Top face of tile (squished)
   ctx.beginPath();
   ctx.moveTo(p.x, p.y);
   ctx.lineTo(p.x + TILE, p.y);
-  ctx.lineTo(p.x + TILE, p.y + TILE);
-  ctx.lineTo(p.x, p.y + TILE);
+  ctx.lineTo(p.x + TILE, p.y + TILE_H);
+  ctx.lineTo(p.x, p.y + TILE_H);
   ctx.closePath();
   ctx.fillStyle = highlight ? 'rgba(212, 232, 186, 0.50)' : `hsla(95, 34%, ${topTone}%, 0.28)`;
   ctx.fill();
   ctx.strokeStyle = '#6f8961';
   ctx.stroke();
 
+  // Side face of tile (elevation edge)
   ctx.beginPath();
-  ctx.moveTo(p.x, p.y + TILE);
-  ctx.lineTo(p.x + TILE, p.y + TILE);
-  ctx.lineTo(p.x + TILE, p.y + TILE + ELEV);
-  ctx.lineTo(p.x, p.y + TILE + ELEV);
+  ctx.moveTo(p.x, p.y + TILE_H);
+  ctx.lineTo(p.x + TILE, p.y + TILE_H);
+  ctx.lineTo(p.x + TILE, p.y + TILE_H + ELEV);
+  ctx.lineTo(p.x, p.y + TILE_H + ELEV);
   ctx.closePath();
   ctx.fillStyle = `hsl(95, 26%, ${sideTone}%)`;
   ctx.fill();
 }
 
+function drawWall(wx, wy, obj) {
+  const { sx, sy } = worldToScreen(wx, wy);
+  const p = screenToPx(sx, sy);
+
+  const hasReadyImage = obj.img && obj.img.complete;
+  const usePlaceholder = obj.pending || !hasReadyImage;
+
+  function drawWallSurface(y, h) {
+    if (usePlaceholder) {
+      // Temporary wall texture while generating: visible on both top and face.
+      ctx.save();
+      ctx.fillStyle = 'rgba(120, 120, 120, 0.55)';
+      ctx.fillRect(p.x, y, TILE, h);
+      ctx.strokeStyle = 'rgba(210, 210, 210, 0.35)';
+      ctx.lineWidth = 1;
+      for (let x = p.x + 8; x < p.x + TILE; x += 16) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 8, y + h);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+    ctx.drawImage(obj.img, p.x, y, TILE, h);
+  }
+
+  // Draw wall top surface (squished), offset up by WALL_HEIGHT
+  const wallTopY = p.y - WALL_HEIGHT;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(p.x, wallTopY, TILE, TILE_H);
+  ctx.clip();
+  drawWallSurface(wallTopY, TILE_H);
+  ctx.restore();
+
+  // Draw wall face (vertical side, not squished)
+  const faceStartY = wallTopY + TILE_H; // bottom of wall top
+  const faceEndY = p.y + TILE_H; // bottom of floor tile
+  const faceHeight = faceEndY - faceStartY; // equals WALL_HEIGHT
+
+  // Clip to not overlap southern tile
+  const southernTileTopY = p.y + TILE_H;
+  const clippedFaceEndY = Math.min(faceEndY, southernTileTopY);
+  const clippedFaceHeight = clippedFaceEndY - faceStartY;
+
+  if (clippedFaceHeight > 0) {
+    ctx.save();
+
+    // Set up clipping region
+    ctx.beginPath();
+    ctx.rect(p.x, faceStartY, TILE, clippedFaceHeight);
+    ctx.clip();
+
+    // Flip texture upside down
+    ctx.translate(p.x, faceStartY + clippedFaceHeight);
+    ctx.scale(1, -1);
+
+    // Draw the texture (or placeholder) flipped
+    if (usePlaceholder) {
+      ctx.fillStyle = 'rgba(120, 120, 120, 0.55)';
+      ctx.fillRect(0, 0, TILE, clippedFaceHeight);
+      ctx.strokeStyle = 'rgba(210, 210, 210, 0.35)';
+      ctx.lineWidth = 1;
+      for (let x = 8; x < TILE; x += 16) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x - 8, clippedFaceHeight);
+        ctx.stroke();
+      }
+    } else {
+      ctx.drawImage(obj.img, 0, 0, TILE, clippedFaceHeight);
+    }
+
+    // Darken with overlay
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(0, 0, TILE, clippedFaceHeight);
+
+    ctx.restore();
+  }
+}
+
 function drawObject(wx, wy, obj) {
+  // Handle walls specially
+  if (obj.isWall) {
+    drawWall(wx, wy, obj);
+    return;
+  }
+
   const { sx, sy } = worldToScreen(wx, wy);
   const p = screenToPx(sx, sy);
   const cx = p.x + TILE / 2;
-  const cy = p.y + TILE / 2;
+  const cy = p.y + TILE_H * 0.35; // Position toward top to appear centered in 3D space
   const isEditPending = obj.pending && obj.pendingKind === 'edit';
 
   if (obj.pending && !isEditPending) {
@@ -302,7 +411,49 @@ function drawPlayer() {
   if (!img.complete) return;
   const w = 136;
   const h = 136;
-  ctx.drawImage(img, p.x + TILE / 2 - w / 2, p.y + TILE / 2 - h / 2, w, h);
+  ctx.drawImage(img, p.x + TILE / 2 - w / 2, p.y + TILE_H * 0.35 - h / 2, w, h);
+}
+
+function drawHotbar() {
+  const slotW = 72;
+  const slotH = 72;
+  const gap = 8;
+  const totalW = HOTBAR_SLOTS * slotW + (HOTBAR_SLOTS - 1) * gap;
+  const x0 = Math.floor((canvas.width - totalW) / 2);
+  const y0 = canvas.height - slotH - 10;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,20,20,0.45)';
+  ctx.fillRect(x0 - 10, y0 - 10, totalW + 20, slotH + 20);
+
+  for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
+    const x = x0 + i * (slotW + gap);
+    const slot = state.wallHotbar[i];
+    const selected = i === state.selectedWallSlot;
+
+    ctx.fillStyle = selected ? 'rgba(255,245,180,0.30)' : 'rgba(0,0,0,0.35)';
+    ctx.fillRect(x, y0, slotW, slotH);
+    ctx.strokeStyle = selected ? '#fff1a5' : 'rgba(255,255,255,0.30)';
+    ctx.lineWidth = selected ? 3 : 1;
+    ctx.strokeRect(x, y0, slotW, slotH);
+
+    if (slot) {
+      if (slot.pending) {
+        const pulse = (Math.sin(performance.now() / 220 + i) + 1) / 2;
+        ctx.fillStyle = `rgba(170, 180, 190, ${0.25 + pulse * 0.3})`;
+        ctx.fillRect(x + 8, y0 + 8, slotW - 16, slotH - 16);
+      } else if (slot.img && slot.img.complete) {
+        ctx.drawImage(slot.img, x + 5, y0 + 5, slotW - 10, slotH - 10);
+      }
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = '14px "VT323", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(i + 1), x + 4, y0 + 14);
+  }
+
+  ctx.restore();
 }
 
 /* ---- Interaction ---- */
@@ -323,6 +474,7 @@ async function interact() {
     const opId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     state.objects.set(key, {
       name,
+      isWall: false,
       pending: true,
       pendingKind: 'create',
       pendingSince: performance.now(),
@@ -350,6 +502,7 @@ async function interact() {
         imageUrl: data.imageUrl,
         objectKey: data.objectKey,
         orientation: data.orientation,
+        isWall: false,
         img: loadImage(data.imageUrl),
         pending: false,
       });
@@ -409,6 +562,7 @@ async function interact() {
       imageUrl: data.imageUrl,
       objectKey: existing.objectKey || data.objectKey,
       orientation: existing.orientation || data.orientation,
+      isWall: existing.isWall, // preserve wall flag
       img: loadImage(data.imageUrl),
       pending: false,
     });
@@ -464,6 +618,73 @@ async function deleteObjectAhead() {
   }
 }
 
+async function placeWall() {
+  if (state.modalOpen) return;
+
+  const { x, y } = aheadPos();
+  const key = tileKey(x, y);
+  const existing = state.objects.get(key);
+
+  if (existing) {
+    setStatus('Tile occupied. Cannot place wall.');
+    return;
+  }
+
+  const slot = state.wallHotbar[state.selectedWallSlot];
+  if (!slot || slot.pending || !slot.img) {
+    setStatus(`Slot ${state.selectedWallSlot + 1} has no ready wall texture.`);
+    return;
+  }
+
+  state.objects.set(key, {
+    name: slot.name || `wall ${state.selectedWallSlot + 1}`,
+    isWall: true,
+    imageUrl: slot.imageUrl,
+    wallSlot: state.selectedWallSlot,
+    img: slot.img,
+    pending: false,
+  });
+  setStatus(`Placed wall from slot ${state.selectedWallSlot + 1}.`);
+}
+
+async function generateWallTextureForSelectedSlot() {
+  if (state.modalOpen) return;
+  const slotIndex = state.selectedWallSlot;
+  const prompt = await showPrompt(
+    `Generate wall texture for slot ${slotIndex + 1}`,
+    'dark mossy brick wall texture'
+  );
+  if (!prompt) return;
+
+  state.wallHotbar[slotIndex] = {
+    name: prompt.trim() || `wall ${slotIndex + 1}`,
+    pending: true,
+    pendingSince: performance.now(),
+  };
+  setStatus(`Generating wall texture for slot ${slotIndex + 1}...`);
+
+  try {
+    const resp = await fetch('/api/generate-wall-texture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to generate wall texture');
+
+    state.wallHotbar[slotIndex] = {
+      name: prompt.trim() || `wall ${slotIndex + 1}`,
+      imageUrl: data.imageUrl,
+      img: loadImage(data.imageUrl),
+      pending: false,
+    };
+    setStatus(`Wall texture saved to slot ${slotIndex + 1}.`);
+  } catch (err) {
+    state.wallHotbar[slotIndex] = null;
+    setStatus(`Wall texture generation failed: ${err.message}`);
+  }
+}
+
 function setStatus(msg) {
   statusEl.textContent = msg;
 }
@@ -490,6 +711,25 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Backspace') {
     e.preventDefault();
     deleteObjectAhead();
+    return;
+  }
+
+  if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault();
+    generateWallTextureForSelectedSlot();
+    return;
+  }
+
+  if (e.key === 'w' || e.key === 'W') {
+    e.preventDefault();
+    placeWall();
+    return;
+  }
+
+  if (/^[1-9]$/.test(e.key)) {
+    e.preventDefault();
+    state.selectedWallSlot = Number(e.key) - 1;
+    setStatus(`Selected wall slot ${e.key}.`);
     return;
   }
 
@@ -541,6 +781,8 @@ function render() {
       if (state.player.x === wx && state.player.y === wy) drawPlayer();
     }
   }
+
+  drawHotbar();
 
   requestAnimationFrame(render);
 }

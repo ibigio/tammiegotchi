@@ -13,6 +13,7 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const GENERATED_DIR = path.join(PUBLIC_DIR, 'generated');
 const CACHE_FILE = path.join(ROOT, 'object-image-cache.json');
+const MASTER_WALL_TEXTURE = path.join(PUBLIC_DIR, 'assets', 'wall_bricks.png');
 const PYTHON_SCRIPT = path.join(ROOT, 'nanobanana_generate.py');
 const PYTHON_BIN = fs.existsSync(path.join(ROOT, '.venv', 'bin', 'python'))
   ? path.join(ROOT, '.venv', 'bin', 'python')
@@ -192,7 +193,15 @@ function assertSafeGeneratedPath(imageUrl) {
   return norm;
 }
 
-async function runGenerator({ prompt, outputAbs, editAbs, refAbsList, whiteKey, floodFillThreshold }) {
+async function runGenerator({
+  prompt,
+  outputAbs,
+  editAbs,
+  refAbsList,
+  whiteKey,
+  floodFillThreshold,
+  removeBg = true,
+}) {
   fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
   const args = [PYTHON_SCRIPT, prompt, '-o', outputAbs];
   if (editAbs) {
@@ -203,13 +212,17 @@ async function runGenerator({ prompt, outputAbs, editAbs, refAbsList, whiteKey, 
       args.push('--ref', refAbs);
     }
   }
-  // Always use flood-fill in app flows so interior whites are preserved.
-  args.push('--bg-remove-mode', 'flood-fill');
-  if (whiteKey) {
-    args.push('--white-key', whiteKey);
-  }
-  if (typeof floodFillThreshold === 'number') {
-    args.push('--flood-fill-threshold', String(floodFillThreshold));
+  if (removeBg) {
+    // Always use flood-fill in app flows so interior whites are preserved.
+    args.push('--bg-remove-mode', 'flood-fill');
+    if (whiteKey) {
+      args.push('--white-key', whiteKey);
+    }
+    if (typeof floodFillThreshold === 'number') {
+      args.push('--flood-fill-threshold', String(floodFillThreshold));
+    }
+  } else {
+    args.push('--no-remove-white-bg');
   }
 
   const env = { ...process.env };
@@ -358,6 +371,39 @@ app.post('/api/edit-object-experimental-green', async (req, res) =>
     floodFillThreshold: EXPERIMENT_GREEN_THRESHOLD,
   })
 );
+
+app.post('/api/generate-wall-texture', async (req, res) => {
+  const { prompt } = req.body || {};
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+  if (!fs.existsSync(MASTER_WALL_TEXTURE)) {
+    return res.status(500).json({ error: 'Master wall texture is missing on server' });
+  }
+
+  const out = outputFileAbsolute();
+  const wallPrompt =
+    `Create a tileable wall texture: ${prompt}. ` +
+    'Use the provided master wall texture as style reference only. ' +
+    'Do not include the reference image itself. ' +
+    'No orientation instructions. ' +
+    'Make it bright. ' +
+    'Zoom in so texture elements are large and readable. ' +
+    'Use low object count / low detail density. ' +
+    'Keep it seamless and suitable for repeating game wall tiles.';
+
+  try {
+    await runGenerator({
+      prompt: wallPrompt,
+      outputAbs: out.abs,
+      refAbsList: [MASTER_WALL_TEXTURE],
+      removeBg: false,
+    });
+    return res.json({ imageUrl: out.url });
+  } catch (err) {
+    return res.status(500).json({ error: String(err.message || err) });
+  }
+});
 
 app.post('/api/uncache-object-orientation', (req, res) => {
   const { objectKey, orientation } = req.body || {};
